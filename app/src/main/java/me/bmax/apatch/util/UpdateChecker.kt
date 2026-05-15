@@ -7,10 +7,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.util.Log
 import me.bmax.apatch.BuildConfig
+import org.json.JSONObject
 
 object UpdateChecker {
     private const val TAG = "UpdateChecker"
-    private const val UPDATE_API_URL = "https://folk.mysqil.com/api/version"
+    private const val UPDATE_API_URL =
+        "https://api.github.com/repos/2481849298/FolkPatch/releases/latest"
     private const val UPDATE_URL = "https://github.com/2481849298/FolkPatch/releases"
 
     suspend fun checkUpdate(): Boolean {
@@ -23,15 +25,22 @@ object UpdateChecker {
                 )
                 val rawResponse = result.getOrNull() ?: return@withContext false
 
-                val remoteVersionCodeStr = rawResponse.replace("\uFEFF", "").trim()
-                Log.d(TAG, "Parsed version string: '$remoteVersionCodeStr'")
+                val tagName = JSONObject(rawResponse.replace("\uFEFF", "").trim())
+                    .optString("tag_name")
+                    .trim()
+                    .removePrefix("v")
+                    .removePrefix("V")
 
-                val remoteVersionCode = remoteVersionCodeStr.toIntOrNull()
+                val remoteVersionCode = Regex("\\d+")
+                    .find(tagName)
+                    ?.value
+                    ?.toIntOrNull()
+
                 if (remoteVersionCode != null) {
                     Log.d(TAG, "Remote: $remoteVersionCode, Local: ${BuildConfig.VERSION_CODE}")
                     return@withContext remoteVersionCode > BuildConfig.VERSION_CODE
                 } else {
-                    Log.e(TAG, "Failed to parse version code")
+                    Log.e(TAG, "Failed to parse version code from tag: '$tagName'")
                 }
                 false
             } catch (e: Exception) {
