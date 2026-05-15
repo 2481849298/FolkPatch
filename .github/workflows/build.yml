@@ -134,6 +134,44 @@ jobs:
           path: FolkPatch-Release-*.apk
           retention-days: 30
 
+  release:
+    name: Create Release
+    needs: [prepare, build_debug, build_release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (needs.build_debug.result == 'success' || needs.build_release.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(grep 'fun getVersionName' build.gradle.kts | sed -E 's/.*"(.*)".*/\1/')
+          CODE=$(grep 'fun getVersionCode' build.gradle.kts | sed -E 's/.*return ([0-9]+).*/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION-$CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: folkpatch-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1.14.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ steps.version.outputs.tag }}
+          name: FolkPatch ${{ steps.version.outputs.version }} (${{ steps.version.outputs.code }})
+          artifacts: artifacts/*
+          generateReleaseNotes: true
+          allowUpdates: true
+          replacesArtifacts: true
+
   upload:
     name: Upload to Telegram
     needs: [prepare, build_debug, build_release]
@@ -163,14 +201,14 @@ jobs:
         run: |
           FILES=$(find artifacts -type f 2>/dev/null | sort)
           FILE_COUNT=$(echo "$FILES" | grep -c . || true)
-          
+
           if [ "$FILE_COUNT" -eq 0 ]; then
             echo "::error::No files found in artifacts"
             exit 1
           fi
-          
+
           CAPTION="${{ needs.prepare.outputs.commit_msg }}\nBranch: ${{ github.ref_name }}\nCommit: ${{ github.sha }}\nAuthor: ${{ needs.prepare.outputs.commit_author }}\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          
+
           if [ "$FILE_COUNT" -eq 1 ]; then
             curl -sf -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
               -F "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
@@ -181,7 +219,7 @@ jobs:
             while IFS= read -r f; do
               FILE_ARR+=("$f")
             done <<< "$FILES"
-            
+
             TOTAL=${#FILE_ARR[@]}
             MEDIA_JSON="["
             for i in "${!FILE_ARR[@]}"; do
@@ -196,15 +234,15 @@ jobs:
               fi
             done
             MEDIA_JSON+="]"
-            
+
             ARGS=(-X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMediaGroup")
             ARGS+=(-F "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}")
             ARGS+=(-F "media=${MEDIA_JSON}")
-            
+
             while IFS= read -r f; do
               FNAME=$(basename "$f")
               ARGS+=(-F "$FNAME=@$f")
             done <<< "$FILES"
-            
+
             curl -sf "${ARGS[@]}"
           fi
