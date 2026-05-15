@@ -163,7 +163,7 @@ fun AboutScreen(navigator: DestinationsNavigator) {
                             )
                         },
                         title = stringResource(id = R.string.about_github),
-                        onClick = { uriHandler.openUri("https://github.com/LyraVoid/FolkPatch") }
+                        onClick = { uriHandler.openUri("https://github.com/2481849298/FolkPatch") }
                     )
                 }
                 item {
