@@ -258,11 +258,19 @@ fun registerDownloadTask(
 
             if (!destFile.exists() || forceDownload || isFileUpdated(srcUrl, destFile)) {
                 println(" - Downloading $srcUrl to ${destFile.absolutePath}")
-                downloadFile(srcUrl, destFile)
-                if (version != null) {
-                    versionFile.writeText(version)
+                try {
+                    downloadFile(srcUrl, destFile)
+                    if (version != null) {
+                        versionFile.writeText(version)
+                    }
+                    println(" - Download completed.")
+                } catch (e: Exception) {
+                    if (destFile.exists() && destFile.length() > 0) {
+                        println(" - Download failed (${e.message}); keeping existing local file.")
+                    } else {
+                        throw e
+                    }
                 }
-                println(" - Download completed.")
             } else {
                 println(" - File is up-to-date, skipping download.")
             }
@@ -271,9 +279,14 @@ fun registerDownloadTask(
 }
 
 fun isFileUpdated(url: String, localFile: File): Boolean {
-    val connection = URI.create(url).toURL().openConnection()
-    val remoteLastModified = connection.getHeaderFieldDate("Last-Modified", 0L)
-    return remoteLastModified > localFile.lastModified()
+    return try {
+        val connection = URI.create(url).toURL().openConnection()
+        val remoteLastModified = connection.getHeaderFieldDate("Last-Modified", 0L)
+        remoteLastModified > localFile.lastModified()
+    } catch (e: Exception) {
+        // Network/release not reachable; rely on existing local file.
+        false
+    }
 }
 
 fun downloadFile(url: String, destFile: File) {
@@ -286,28 +299,24 @@ fun downloadFile(url: String, destFile: File) {
 
 registerDownloadTask(
     taskName = "downloadKpimg",
-    srcUrl = "https://github.com/2481849298/KernelPatch/releases/download/$kernelPatchVersion/kpimg-android",
+    srcUrl = "https://github.com/2481849298/KernelPatch/releases/latest/download/kpimg-android",
     destPath = "${project.projectDir}/src/main/assets/kpimg",
-    project = project,
-    version = kernelPatchVersion
+    project = project
 )
 
 registerDownloadTask(
     taskName = "downloadKptools",
-    srcUrl = "https://github.com/2481849298/KernelPatch/releases/download/$kernelPatchVersion/kptools-android",
+    srcUrl = "https://github.com/2481849298/KernelPatch/releases/latest/download/kptools-android",
     destPath = "${project.projectDir}/libs/arm64-v8a/libkptools.so",
-    project = project,
-    version = kernelPatchVersion
+    project = project
 )
 
-// Compat kp version less than 0.10.7
-// TODO: Remove in future
+// Compat shim shipped alongside KernelPatch latest release as kpatch-android.
 registerDownloadTask(
     taskName = "downloadCompatKpatch",
-    srcUrl = "https://github.com/2481849298/KernelPatch/releases/download/0.10.7/kpatch-android",
+    srcUrl = "https://github.com/2481849298/KernelPatch/releases/latest/download/kpatch-android",
     destPath = "${project.projectDir}/libs/arm64-v8a/libkpatch.so",
-    project = project,
-    version = "0.10.7"
+    project = project
 )
 
 tasks.register<Copy>("mergeScripts") {
