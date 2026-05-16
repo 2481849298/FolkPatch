@@ -71,12 +71,6 @@ class PatchesViewModel : ViewModel() {
     var newExtras = mutableStateListOf<KPModel.IExtraInfo>()
     var newExtrasFileName = mutableListOf<String>()
 
-    fun checkSuperKeyValidation(superKey: String): Boolean {
-        val length = superKey.length
-        val regex = Regex("^(?=.*[A-Za-z])(?=.*\\d)[A-Za-z\\d]{8,63}$")
-        return length in 8..63 && regex.matches(superKey)
-    }
-
     var running by mutableStateOf(false)
     var patching by mutableStateOf(false)
     var patchdone by mutableStateOf(false)
@@ -539,13 +533,10 @@ class PatchesViewModel : ViewModel() {
             // adapt for 0.10.7 and lower KP
             var isKpOld = false
 
-            val superkey = this@PatchesViewModel.superkey.trim()
-            if (superkey.isEmpty()) {
-                logs.add(" SuperKey is empty. Toggle 'Custom SuperKey' on the patch page and enter a valid key.")
-                error = "SuperKey is empty"
-                patchdone = true
-                patching = false
-                return@launch
+            val superkey = if (useKey && this@PatchesViewModel.superkey.isNotEmpty()) {
+                this@PatchesViewModel.superkey
+            } else {
+                "su"
             }
 
             if (mode == PatchMode.PATCH_AND_INSTALL || mode == PatchMode.INSTALL_TO_NEXT_SLOT) {
@@ -633,11 +624,6 @@ class PatchesViewModel : ViewModel() {
                 patching = false
                 return@launch
             }
-
-            // Patch wrote `superkey` into the kernel image; the manager must
-            // use the same value when supercall'ing later, so persist it as
-            // the runtime SuperKey.
-            APApplication.superKey = superkey
 
             if (mode == PatchMode.PATCH_AND_INSTALL) {
                 logs.add("- Reboot to finish the installation...")
