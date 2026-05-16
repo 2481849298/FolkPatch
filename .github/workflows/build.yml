@@ -81,14 +81,13 @@ jobs:
 
       - name: Rename APK
         run: |
-          SHORT="${GITHUB_SHA::7}"
           APK=$(find app/build/outputs/apk/debug -name "*.apk" -type f | head -1)
-          [ -n "$APK" ] && mv "$APK" "FolkPatch-Debug-${SHORT}.apk"
+          [ -n "$APK" ] && mv "$APK" "FolkPatch-Debug.apk"
 
       - uses: actions/upload-artifact@v4
         with:
           name: folkpatch-debug-${{ github.sha }}
-          path: FolkPatch-Debug-*.apk
+          path: FolkPatch-Debug.apk
           retention-days: 30
 
   build_release:
@@ -120,14 +119,13 @@ jobs:
 
       - name: Rename APK
         run: |
-          SHORT="${GITHUB_SHA::7}"
           APK=$(find app/build/outputs/apk/release -name "*.apk" -type f | head -1)
-          [ -n "$APK" ] && mv "$APK" "FolkPatch-Release-${SHORT}.apk"
+          [ -n "$APK" ] && mv "$APK" "FolkPatch-Release.apk"
 
       - uses: actions/upload-artifact@v4
         with:
           name: folkpatch-release-${{ github.sha }}
-          path: FolkPatch-Release-*.apk
+          path: FolkPatch-Release.apk
           retention-days: 30
 
   release:
@@ -166,7 +164,9 @@ jobs:
           artifacts: artifacts/*
           generateReleaseNotes: true
           allowUpdates: true
+          removeArtifacts: true
           replacesArtifacts: true
+          makeLatest: true
 
   upload:
     name: Upload to Telegram
