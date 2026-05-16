@@ -66,7 +66,7 @@ class PatchesViewModel : ViewModel() {
     var bootDev by mutableStateOf("")
     var kimgInfo by mutableStateOf(KPModel.KImgInfo("", false))
     var kpimgInfo by mutableStateOf(KPModel.KPImgInfo("", "", "", "", ""))
-    var superkey by mutableStateOf("")
+    var superkey by mutableStateOf(APApplication.superKey)
     var existedExtras = mutableStateListOf<KPModel.IExtraInfo>()
     var newExtras = mutableStateListOf<KPModel.IExtraInfo>()
     var newExtrasFileName = mutableListOf<String>()
@@ -633,6 +633,11 @@ class PatchesViewModel : ViewModel() {
                 patching = false
                 return@launch
             }
+
+            // Patch wrote `superkey` into the kernel image; the manager must
+            // use the same value when supercall'ing later, so persist it as
+            // the runtime SuperKey.
+            APApplication.superKey = superkey
 
             if (mode == PatchMode.PATCH_AND_INSTALL) {
                 logs.add("- Reboot to finish the installation...")
