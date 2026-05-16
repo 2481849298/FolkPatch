@@ -77,6 +77,18 @@ jobs:
 
       - uses: ./.github/actions/setup-build-env
 
+      - name: Bump versionCode for CI
+        run: |
+          BASE=$(grep -A 1 'fun getVersionCode' build.gradle.kts | grep -m1 'return ' | sed -E 's/.*return ([0-9]+).*/\1/')
+          NEW=$((BASE + GITHUB_RUN_NUMBER))
+          echo "Bumping versionCode $BASE -> $NEW"
+          awk -v new="$NEW" '
+            /^fun getVersionCode\(\): Int \{/ { in_fn=1; print; next }
+            in_fn && /return [0-9]+/ { sub(/return [0-9]+/, "return " new); in_fn=0 }
+            { print }
+          ' build.gradle.kts > build.gradle.kts.tmp && mv build.gradle.kts.tmp build.gradle.kts
+          grep -A 1 'fun getVersionCode' build.gradle.kts | head
+
       - run: ./gradlew assembleDebug --no-daemon
 
       - name: Rename APK
@@ -112,6 +124,18 @@ jobs:
           KEY_PASSWORD=folkpatch123
           EOF
 
+      - name: Bump versionCode for CI
+        run: |
+          BASE=$(grep -A 1 'fun getVersionCode' build.gradle.kts | grep -m1 'return ' | sed -E 's/.*return ([0-9]+).*/\1/')
+          NEW=$((BASE + GITHUB_RUN_NUMBER))
+          echo "Bumping versionCode $BASE -> $NEW"
+          awk -v new="$NEW" '
+            /^fun getVersionCode\(\): Int \{/ { in_fn=1; print; next }
+            in_fn && /return [0-9]+/ { sub(/return [0-9]+/, "return " new); in_fn=0 }
+            { print }
+          ' build.gradle.kts > build.gradle.kts.tmp && mv build.gradle.kts.tmp build.gradle.kts
+          grep -A 1 'fun getVersionCode' build.gradle.kts | head
+
       - run: ./gradlew assembleRelease --no-daemon
 
       - name: Debug APK location
@@ -143,7 +167,8 @@ jobs:
         id: version
         run: |
           VERSION=$(grep -A 1 'fun getVersionName' build.gradle.kts | grep -m1 'return ' | sed -E 's/.*"(.*)".*/\1/')
-          CODE=$(grep -A 1 'fun getVersionCode' build.gradle.kts | grep -m1 'return ' | sed -E 's/.*return ([0-9]+).*/\1/')
+          BASE=$(grep -A 1 'fun getVersionCode' build.gradle.kts | grep -m1 'return ' | sed -E 's/.*return ([0-9]+).*/\1/')
+          CODE=$((BASE + GITHUB_RUN_NUMBER))
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION-$CODE" >> "$GITHUB_OUTPUT"

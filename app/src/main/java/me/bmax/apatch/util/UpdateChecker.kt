@@ -31,9 +31,15 @@ object UpdateChecker {
                     .removePrefix("v")
                     .removePrefix("V")
 
+                // Tag formats we accept (longest integer wins, e.g.
+                //   114252         -> 114252
+                //   v4.3-114252    -> 114252
+                //   4.3-114252     -> 114252
+                //   v114252        -> 114252
                 val remoteVersionCode = Regex("\\d+")
-                    .find(tagName)
-                    ?.value
+                    .findAll(tagName)
+                    .map { it.value }
+                    .maxByOrNull { it.length }
                     ?.toIntOrNull()
 
                 if (remoteVersionCode != null) {
