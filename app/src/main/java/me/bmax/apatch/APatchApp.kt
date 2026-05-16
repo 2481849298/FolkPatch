@@ -347,8 +347,7 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler, ImageLoade
         super.onCreate()
         apApp = this
         sharedPreferences = getSharedPreferences(SP_NAME, Context.MODE_PRIVATE)
-        superKey = sharedPreferences.getString(KEY_SUPER_KEY, null)
-            ?.takeIf { it.isNotBlank() } ?: "su"
+        superKey = sharedPreferences.getString(KEY_SUPER_KEY, "").orEmpty()
         if (Application.getProcessName().endsWith(":root") || Application.getProcessName().endsWith(":webui")) {
             return
         }

@@ -533,10 +533,15 @@ class PatchesViewModel : ViewModel() {
             // adapt for 0.10.7 and lower KP
             var isKpOld = false
 
-            val superkey = if (useKey && this@PatchesViewModel.superkey.isNotEmpty()) {
-                this@PatchesViewModel.superkey
-            } else {
-                "su"
+            val superkey = APApplication.superKey.trim().ifEmpty {
+                this@PatchesViewModel.superkey.trim()
+            }
+            if (superkey.isEmpty()) {
+                logs.add(" SuperKey is empty. Please set it from the home screen first.")
+                error = "SuperKey is empty"
+                patchdone = true
+                patching = false
+                return@launch
             }
 
             if (mode == PatchMode.PATCH_AND_INSTALL || mode == PatchMode.INSTALL_TO_NEXT_SLOT) {

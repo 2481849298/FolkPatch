@@ -63,6 +63,7 @@ import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.OutlinedTextField
 import me.bmax.apatch.ui.theme.BackgroundConfig
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Card
@@ -623,6 +624,11 @@ private fun KStatusCard(
         UninstallDialog(showDialog = showUninstallDialog, navigator)
     }
 
+    var showSuperKeyDialog by remember { mutableStateOf(false) }
+    var superKeyDraft by remember { mutableStateOf(APApplication.superKey) }
+    var superKeyVersion by remember { mutableStateOf(0) }
+    val currentSuperKey by remember(superKeyVersion) { mutableStateOf(APApplication.superKey) }
+
     val prefs = APApplication.sharedPreferences
     
     // Check if update notification is blocked
@@ -677,7 +683,12 @@ private fun KStatusCard(
     Card(
         onClick = {
             if (kpState != APApplication.State.KERNELPATCH_INSTALLED) {
-                navigator.navigate(InstallModeSelectScreenDestination)
+                if (currentSuperKey.isBlank()) {
+                    superKeyDraft = ""
+                    showSuperKeyDialog = true
+                } else {
+                    navigator.navigate(InstallModeSelectScreenDestination)
+                }
             }
         },
         shape = RoundedCornerShape(20.dp),
@@ -761,11 +772,19 @@ private fun KStatusCard(
 
                         else -> {
                             Text(
-                                text = stringResource(R.string.home_install_unknown),
+                                text = if (currentSuperKey.isBlank()) {
+                                    stringResource(R.string.home_super_key_required_title)
+                                } else {
+                                    stringResource(R.string.home_install_unknown)
+                                },
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = stringResource(R.string.home_install_unknown_summary),
+                                text = if (currentSuperKey.isBlank()) {
+                                    stringResource(R.string.home_super_key_required_summary)
+                                } else {
+                                    stringResource(R.string.home_install_unknown_summary)
+                                },
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
@@ -785,7 +804,12 @@ private fun KStatusCard(
                     val onAction = {
                         when (kpState) {
                             APApplication.State.UNKNOWN_STATE -> {
-                                navigator.navigate(InstallModeSelectScreenDestination)
+                                if (currentSuperKey.isBlank()) {
+                                    superKeyDraft = ""
+                                    showSuperKeyDialog = true
+                                } else {
+                                    navigator.navigate(InstallModeSelectScreenDestination)
+                                }
                             }
 
                             APApplication.State.KERNELPATCH_NEED_UPDATE -> {
@@ -831,7 +855,11 @@ private fun KStatusCard(
                     }, content = {
                         when (kpState) {
                             APApplication.State.UNKNOWN_STATE -> {
-                                Text(text = stringResource(id = R.string.home_ap_cando_install))
+                                if (currentSuperKey.isBlank()) {
+                                    Text(text = stringResource(id = R.string.home_super_key_required_action))
+                                } else {
+                                    Text(text = stringResource(id = R.string.home_ap_cando_install))
+                                }
                             }
 
                             APApplication.State.KERNELPATCH_NEED_UPDATE -> {
@@ -854,6 +882,46 @@ private fun KStatusCard(
                 }
             }
         }
+    }
+
+    if (showSuperKeyDialog) {
+        AlertDialog(
+            onDismissRequest = { showSuperKeyDialog = false },
+            title = { Text(stringResource(id = R.string.home_super_key_required_title)) },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(id = R.string.home_super_key_dialog_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = superKeyDraft,
+                        onValueChange = { superKeyDraft = it },
+                        singleLine = true,
+                        label = { Text(stringResource(id = R.string.home_super_key_dialog_label)) },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = superKeyDraft.trim().isNotEmpty(),
+                    onClick = {
+                        APApplication.superKey = superKeyDraft.trim()
+                        superKeyVersion++
+                        showSuperKeyDialog = false
+                    }
+                ) {
+                    Text(stringResource(id = android.R.string.ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSuperKeyDialog = false }) {
+                    Text(stringResource(id = android.R.string.cancel))
+                }
+            },
+        )
     }
 }
 

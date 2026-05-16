@@ -779,11 +779,11 @@ Please ensure the app is completely closed and reopened for the commands to exec
     <string name="settings_biometric_login_summary">Require biometric authentication when opening the app</string>
     <string name="settings_strong_biometric">Strong Biometric Authentication</string>
     <string name="settings_strong_biometric_summary">Require authentication for installing/uninstalling/disabling modules</string>
-    <string name="settings_super_key_title">SuperKey</string>
-    <string name="settings_super_key_unset">Not set (default: su)</string>
-    <string name="settings_super_key_current">Current: %1$s</string>
-    <string name="settings_super_key_label">SuperKey</string>
-    <string name="settings_super_key_hint">Must match the SuperKey used when patching boot.img.</string>
+    <string name="home_super_key_required_title">Enter SuperKey</string>
+    <string name="home_super_key_required_summary">Tap to enter your SuperKey so the manager can talk to the kernel.</string>
+    <string name="home_super_key_required_action">Enter SuperKey</string>
+    <string name="home_super_key_dialog_hint">Use the same SuperKey you set when patching boot.img.</string>
+    <string name="home_super_key_dialog_label">SuperKey</string>
 
     <!-- Theme Store Strings -->
     <string name="theme_store_title">Theme Store</string>
