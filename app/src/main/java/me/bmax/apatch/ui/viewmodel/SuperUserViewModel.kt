@@ -33,10 +33,11 @@ import me.bmax.apatch.util.SafeUriResolver
 import me.bmax.apatch.util.getRootShell
 import java.text.Collator
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.coroutines.suspendCoroutine
 
 
 import android.net.Uri
@@ -81,9 +82,7 @@ class SuperUserViewModel : ViewModel() {
                 else -> 2
             }
         }.then(compareBy(Collator.getInstance(Locale.getDefault()), AppInfo::label))
-        apps.sortedWith(comparator).also {
-            isRefreshing = false
-        }
+        apps.sortedWith(comparator)
     }
 
     val appList by derivedStateOf {
@@ -99,7 +98,9 @@ class SuperUserViewModel : ViewModel() {
 
     private suspend inline fun connectRootService(
         crossinline onDisconnect: () -> Unit = {}
-    ): Pair<IBinder, ServiceConnection> = suspendCoroutine { continuation ->
+    ): Pair<IBinder, ServiceConnection> = suspendCancellableCoroutine { continuation ->
+        val resumed = AtomicBoolean(false)
+
         val connection = object : ServiceConnection {
             override fun onServiceDisconnected(name: ComponentName?) {
                 Log.w(TAG, "onServiceDisconnected: $name")
@@ -109,39 +110,56 @@ class SuperUserViewModel : ViewModel() {
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                 Log.i(TAG, "onServiceConnected: $name")
                 if (binder != null) {
-                    try {
+                    if (resumed.compareAndSet(false, true)) {
                         continuation.resume(binder to this)
-                    } catch (e: IllegalStateException) {
-                        Log.w(TAG, "Service connected but continuation already resumed", e)
+                    } else {
+                        Log.w(TAG, "Service connected but continuation already resumed")
                     }
                 } else {
                     Log.e(TAG, "Service connected but binder is null")
-                    // If binder is null, we can't really resume successfully, but we should unblock.
-                    // However, normally binder is not null.
                 }
             }
         }
         val intent = Intent(apApp, RootServices::class.java)
-        
+
         Log.d(TAG, "Attempting to bind RootService. Shell isRoot: ${APatchCli.SHELL.isRoot}")
         Log.d(TAG, "Shell info: ${APatchCli.SHELL}")
-        
-        // Ensure binding happens on the main thread as required by Android's bindService
+
+        continuation.invokeOnCancellation {
+            Log.w(TAG, "connectRootService coroutine cancelled, unbinding service")
+            resumed.set(true)
+            try {
+                apApp.unbindService(connection)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to unbind service on cancellation", e)
+            }
+        }
+
         val task = RootServices.bindOrTask(
             intent,
             Shell.EXECUTOR,
             connection,
         )
-        
+
         if (task == null) {
             Log.e(TAG, "RootServices.bindOrTask returned null")
-            continuation.resumeWithException(IllegalStateException("bindOrTask returned null"))
+            if (resumed.compareAndSet(false, true)) {
+                continuation.resumeWithException(IllegalStateException("bindOrTask returned null"))
+            }
         } else {
             val shell = APatchCli.SHELL
             Log.d(TAG, "Executing bind task...")
-            
-            // Execute the binding task
-            shell.execTask(task)
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    shell.execTask(task)
+                } catch (e: Exception) {
+                    if (resumed.compareAndSet(false, true)) {
+                        continuation.resumeWithException(e)
+                    } else {
+                        Log.w(TAG, "Bind task failed after continuation completed", e)
+                    }
+                }
+            }
         }
     }
 

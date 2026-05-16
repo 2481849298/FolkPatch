@@ -28,6 +28,7 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +40,14 @@ import kotlinx.coroutines.withTimeout
 
 private const val TAG = "APatchCli"
 private const val SHELL_TIMEOUT_MS = 10_000L
+
+data class ApdExecResult(
+    val success: Boolean,
+    val commandLabel: String,
+    val exitCode: Int? = null,
+    val output: String = "",
+    val errorMessage: String? = null,
+)
 
 private fun getKPatchPath(): String {
     return apApp.applicationInfo.nativeLibraryDir + File.separator + "libkpatch.so"
@@ -122,13 +131,62 @@ fun createRootShell(globalMnt: Boolean = false): Shell {
     }
 }
 
+private fun closeQuietly(shell: Shell?) {
+    try {
+        shell?.close()
+    } catch (_: Throwable) {
+    }
+}
+
+private fun ensureRootShell(shell: Shell, reason: String): Shell {
+    if (shell.isRoot) return shell
+    closeQuietly(shell)
+    throw IOException("Expected root shell for $reason, but received a non-root shell")
+}
+
 object APatchCli {
-    var SHELL: Shell = createRootShell()
-    val GLOBAL_MNT_SHELL: Shell = createRootShell(true)
+    @Volatile
+    private var _shell: Shell? = null
+    @Volatile
+    private var _globalMntShell: Shell? = null
+
+    val SHELL: Shell
+        get() = _shell ?: createRootShellSafe(false).also { _shell = it }
+
+    val GLOBAL_MNT_SHELL: Shell
+        get() = _globalMntShell ?: createRootShellSafe(true).also { _globalMntShell = it }
+
     fun refresh() {
-        val tmp = SHELL
-        SHELL = createRootShell()
-        tmp.close()
+        val old = _shell
+        _shell = createRootShellSafe(false)
+        try { old?.close() } catch (_: Throwable) {}
+    }
+}
+
+internal fun createRootShellSafe(globalMnt: Boolean = false): Shell {
+    return try {
+        createRootShell(globalMnt)
+    } catch (e: Throwable) {
+        Log.e(TAG, "Root shell creation failed, falling back to sh", e)
+        try {
+            Shell.Builder.create().setInitializers(RootShellInitializer::class.java).build("sh")
+        } catch (e2: Throwable) {
+            Log.e(TAG, "Even sh fallback failed, returning non-root shell", e2)
+            Shell.Builder.create().build("sh")
+        }
+    }
+}
+
+internal fun createRootShellStrict(
+    globalMnt: Boolean = false,
+    reason: String = "unknown"
+): Shell {
+    return try {
+        ensureRootShell(createRootShell(globalMnt), reason)
+    } catch (primaryError: Throwable) {
+        Log.e(TAG, "Strict root shell creation failed for $reason", primaryError)
+        val fallback = createRootShellSafe(globalMnt)
+        ensureRootShell(fallback, reason)
     }
 }
 
@@ -191,12 +249,82 @@ fun rootShellForResult(vararg cmds: String): Shell.Result {
 }
 
 fun execApd(args: String, newShell: Boolean = false): Boolean {
-    return if (newShell) {
-        withNewRootShell {
-            ShellUtils.fastCmdResult(this, "${APApplication.APD_PATH} $args")
+    return try {
+        if (newShell) {
+            withNewRootShell {
+                ShellUtils.fastCmdResult(this, "${APApplication.APD_PATH} $args")
+            }
+        } else {
+            ShellUtils.fastCmdResult(getRootShell(), "${APApplication.APD_PATH} $args")
         }
-    } else {
-        ShellUtils.fastCmdResult(getRootShell(), "${APApplication.APD_PATH} $args")
+    } catch (t: Throwable) {
+        Log.e(TAG, "execApd failed: args='$args', newShell=$newShell", t)
+        false
+    }
+}
+
+private fun configureRootProcessEnv(builder: ProcessBuilder) {
+    val basePath = System.getenv("PATH").orEmpty()
+    builder.environment().apply {
+        this["PATH"] = "$basePath:/system_ext/bin:/vendor/bin:${APApplication.APATCH_FOLDER}bin"
+        this["BUSYBOX"] = "${APApplication.APATCH_FOLDER}bin/busybox"
+    }
+}
+
+fun execApdBootFallback(vararg args: String, timeoutMs: Long = SHELL_TIMEOUT_MS): ApdExecResult {
+    val effectiveSuperKey = APApplication.superKey.ifBlank { "su" }
+    val command = mutableListOf(
+        APApplication.SUPERCMD,
+        "su",
+        "-Z",
+        APApplication.MAGISK_SCONTEXT,
+        "exec",
+        APApplication.APD_PATH,
+        "-s",
+        effectiveSuperKey,
+    ).apply {
+        addAll(args)
+    }
+    val commandLabel =
+        "${File(APApplication.SUPERCMD).name} su -Z ${APApplication.MAGISK_SCONTEXT} exec ${APApplication.APD_PATH} -s <superkey> ${args.joinToString(" ")}"
+
+    return try {
+        val builder = ProcessBuilder(command).redirectErrorStream(true)
+        configureRootProcessEnv(builder)
+
+        val process = builder.start()
+        val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+        if (!finished) {
+            process.destroy()
+            if (!process.waitFor(500, TimeUnit.MILLISECONDS)) {
+                process.destroyForcibly()
+            }
+            val output = runCatching {
+                process.inputStream.bufferedReader().use { it.readText().trim() }
+            }.getOrDefault("")
+            ApdExecResult(
+                success = false,
+                commandLabel = commandLabel,
+                output = output,
+                errorMessage = "timed out after ${timeoutMs}ms",
+            )
+        } else {
+            val exitCode = process.exitValue()
+            val output = process.inputStream.bufferedReader().use { it.readText().trim() }
+            ApdExecResult(
+                success = exitCode == 0,
+                commandLabel = commandLabel,
+                exitCode = exitCode,
+                output = output,
+                errorMessage = if (exitCode == 0) null else "exit code $exitCode",
+            )
+        }
+    } catch (t: Throwable) {
+        ApdExecResult(
+            success = false,
+            commandLabel = commandLabel,
+            errorMessage = t.message ?: t.javaClass.simpleName,
+        )
     }
 }
 
@@ -483,14 +611,36 @@ fun setPathHideEnabled(enable: Boolean) {
 fun writePathHidePaths(paths: String) {
     val shell = getRootShell()
     shell.newJob().add("mkdir -p ${APApplication.PATHHIDE_DIR}").exec()
-    val escapedPaths = paths.replace("'", "'\\''")
+    val escapedPaths = normalizePathHidePaths(paths).replace("'", "'\\''")
     shell.newJob().add("echo -n '$escapedPaths' > ${APApplication.PATHHIDE_PATHS_FILE}")
         .exec()
 }
 
 fun readPathHidePaths(): String {
     val shell = getRootShell()
-    return ShellUtils.fastCmd(shell, "cat ${APApplication.PATHHIDE_PATHS_FILE} 2>/dev/null") ?: ""
+    val raw = ShellUtils.fastCmd(shell, "cat ${APApplication.PATHHIDE_PATHS_FILE} 2>/dev/null") ?: ""
+    return normalizePathHidePaths(raw)
+}
+
+fun normalizePathHidePaths(paths: String): String {
+    return paths.lines()
+        .mapNotNull { normalizePathHidePath(it) }
+        .distinct()
+        .joinToString("\n")
+}
+
+private fun normalizePathHidePath(path: String): String? {
+    val trimmed = path.trim()
+    if (trimmed.isEmpty() || !trimmed.startsWith("/")) {
+        return null
+    }
+
+    var normalized = trimmed.replace(Regex("/+"), "/")
+    while (normalized.length > 1 && normalized.endsWith("/")) {
+        normalized = normalized.dropLast(1)
+    }
+
+    return normalized.ifEmpty { null }
 }
 
 fun writePathHideUids(uids: String) {
@@ -735,7 +885,7 @@ fun getMetaModuleImplement(): String {
     try {
         val shell = getRootShell()
         if (!ShellUtils.fastCmdResult(shell, "test -f /data/adb/metamodule/module.prop")) {
-             return "None"
+            return "None"
         }
         val propContent = shell.newJob().add("cat /data/adb/metamodule/module.prop").to(ArrayList(), null).exec().out
         if (propContent.isEmpty()) return "None"
@@ -749,6 +899,74 @@ fun getMetaModuleImplement(): String {
         Log.e(TAG, "getMetaModuleImplement failed", e)
         return "None"
     }
+}
+
+private fun signatureFromAPI(context: Context): ByteArray? {
+    return try {
+        val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            context.packageManager.getPackageInfo(
+                context.packageName, PackageManager.GET_SIGNING_CERTIFICATES
+            )
+        } else {
+            context.packageManager.getPackageInfo(
+                context.packageName,
+                PackageManager.GET_SIGNATURES
+            )
+        }
+
+        val signatures: Array<out Signature>? =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageInfo.signingInfo?.apkContentsSigners
+            } else {
+                packageInfo.signatures
+            }
+
+        signatures?.firstOrNull()?.toByteArray()
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
+
+private fun signatureFromAPK(context: Context): ByteArray? {
+    var signatureBytes: ByteArray? = null
+    try {
+        ZipFile(context.packageResourcePath).use { zipFile ->
+            val entries = zipFile.entries()
+            while (entries.hasMoreElements() && signatureBytes == null) {
+                val entry = entries.nextElement()
+                if (entry.name.matches("(META-INF/.*)\\.(RSA|DSA|EC)".toRegex())) {
+                    zipFile.getInputStream(entry).use { inputStream ->
+                        val certFactory = CertificateFactory.getInstance("X509")
+                        val x509Cert =
+                            certFactory.generateCertificate(inputStream) as X509Certificate
+                        signatureBytes = x509Cert.encoded
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+    return signatureBytes
+}
+
+private fun validateSignature(signatureBytes: ByteArray?, validSignature: String): Boolean {
+    signatureBytes ?: return false
+    val digest = MessageDigest.getInstance("SHA-256")
+    val signatureHash = Base64.encodeToString(digest.digest(signatureBytes), Base64.NO_WRAP)
+    return signatureHash == validSignature
+}
+
+fun verifyAppSignature(validSignature: String): Boolean {
+    val context = apApp.applicationContext
+    val apiSignature = signatureFromAPI(context)
+    val apkSignature = signatureFromAPK(context)
+
+    return validateSignature(apiSignature, validSignature) && validateSignature(
+        apkSignature,
+        validSignature
+    )
 }
 
 fun getMountImplement(): String {

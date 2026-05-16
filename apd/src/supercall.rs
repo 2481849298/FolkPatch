@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use libc::{c_long, c_void, syscall, uid_t, EINVAL};
+use libc::{EEXIST, EINVAL, c_long, c_void, syscall, uid_t};
 use log::{error, info, warn};
 
 use crate::package::{read_ap_package_config, synchronize_package_uid};
@@ -191,14 +191,16 @@ fn sc_su(key: &CStr, profile: &SuProfile) -> c_long {
     if key.to_bytes().is_empty() {
         return (-EINVAL).into();
     }
-    unsafe {
+    let rc = unsafe {
         syscall(
             __NR_SUPERCALL,
             key.as_ptr(),
             ver_and_cmd(SUPERCALL_SU),
             profile,
         ) as c_long
-    }
+    };
+    info!("[diag:sc_su] key_len={} rc={}", key.to_bytes().len(), rc);
+    rc
 }
 
 fn sc_su_reset_path(key: &CStr, path: &CStr) -> c_long {
@@ -219,7 +221,7 @@ fn sc_kpm_load(key: &CStr, path: &CStr, args: &CStr) -> c_long {
     if key.to_bytes().is_empty() || path.to_bytes().is_empty() {
         return (-EINVAL).into();
     }
-    unsafe {
+    let rc = unsafe {
         syscall(
             __NR_SUPERCALL,
             key.as_ptr(),
@@ -228,7 +230,14 @@ fn sc_kpm_load(key: &CStr, path: &CStr, args: &CStr) -> c_long {
             args.as_ptr(),
             std::ptr::null::<c_void>(),
         ) as c_long
-    }
+    };
+    info!(
+        "[diag:sc_kpm_load] key_len={} path={} rc={}",
+        key.to_bytes().len(),
+        path.to_string_lossy(),
+        rc
+    );
+    rc
 }
 
 fn sc_su_uid_nums(key: &CStr) -> c_long {
@@ -272,7 +281,33 @@ fn convert_string_to_u8_array(s: &str) -> [u8; SUPERCALL_SCONTEXT_LEN] {
 }
 
 fn convert_superkey(s: &Option<String>) -> Option<CString> {
-    s.as_ref().and_then(|s| CString::new(s.clone()).ok())
+    let result = s.as_ref().and_then(|s| CString::new(s.clone()).ok());
+    if let Some(ref cs) = result {
+        info!("[diag:convert_superkey] input_present=true cstr_len={}", cs.to_bytes().len());
+    } else {
+        warn!("[diag:convert_superkey] input_present={} result=None", s.is_some());
+    }
+    result
+}
+
+fn set_retry_flag(path: &str, enabled: bool, label: &str) {
+    let result = if enabled {
+        std::fs::write(path, b"1")
+    } else {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    };
+
+    if let Err(e) = result {
+        let action = if enabled { "write" } else { "clear" };
+        warn!(
+            "[{}] failed to {} retry flag '{}': {}",
+            label, action, path, e
+        );
+    }
 }
 
 pub fn refresh_ap_package_list(skey: &CStr, mutex: &Arc<Mutex<()>>) {
@@ -353,8 +388,11 @@ pub fn privilege_apd_profile(superkey: &Option<String>) {
         scontext: convert_string_to_u8_array(all_allow_ctx),
     };
     if let Some(ref key) = key {
+        info!("[diag:privilege] key_len={} key_is_empty={}", key.to_bytes().len(), key.to_bytes().is_empty());
         let result = sc_su(key, &profile);
         info!("[privilege_apd_profile] result = {}", result);
+    } else {
+        warn!("[diag:privilege] superkey is None!");
     }
 }
 
@@ -410,13 +448,19 @@ pub fn autoload_kpm_modules(superkey: &Option<String>, event_filter: &str) {
         enabled: bool,
         #[serde(default, rename = "kpmEntries")]
         kpm_entries: Vec<KpmAutoLoadEntry>,
+        #[serde(default, rename = "kpmPaths")]
+        legacy_kpm_paths: Vec<String>,
     }
 
     let config_path = crate::defs::KPM_AUTOLOAD_CONFIG;
     let content = match std::fs::read_to_string(config_path) {
         Ok(c) => c,
         Err(e) => {
-            info!("[kpm_autoload] config not found or unreadable ({}): {}", config_path, e);
+            set_retry_flag(crate::defs::KPM_AUTOLOAD_RETRY_FILE, false, "kpm_autoload");
+            info!(
+                "[kpm_autoload] config not found or unreadable ({}): {}",
+                config_path, e
+            );
             return;
         }
     };
@@ -429,15 +473,38 @@ pub fn autoload_kpm_modules(superkey: &Option<String>, event_filter: &str) {
         }
     };
 
-    if !config.enabled || config.kpm_entries.is_empty() {
+    let KpmAutoLoadConfig {
+        enabled,
+        mut kpm_entries,
+        legacy_kpm_paths,
+    } = config;
+
+    if kpm_entries.is_empty() && !legacy_kpm_paths.is_empty() {
+        info!("[kpm_autoload] using legacy kpmPaths config");
+        kpm_entries = legacy_kpm_paths
+            .into_iter()
+            .map(|path| KpmAutoLoadEntry {
+                path,
+                event: default_event(),
+                args: String::new(),
+            })
+            .collect();
+    }
+
+    if !enabled || kpm_entries.is_empty() {
+        set_retry_flag(crate::defs::KPM_AUTOLOAD_RETRY_FILE, false, "kpm_autoload");
         info!("[kpm_autoload] disabled or no entries configured, skipping");
         return;
     }
 
     let key = convert_superkey(superkey);
     let key = match key {
-        Some(k) => k,
+        Some(k) => {
+            info!("[diag:kpm_autoload] key_len={}", k.to_bytes().len());
+            k
+        }
         None => {
+            set_retry_flag(crate::defs::KPM_AUTOLOAD_RETRY_FILE, true, "kpm_autoload");
             warn!("[kpm_autoload] no superkey available");
             return;
         }
@@ -445,21 +512,27 @@ pub fn autoload_kpm_modules(superkey: &Option<String>, event_filter: &str) {
 
     const MAX_KPM_MODULES: usize = 64;
 
-    if config.kpm_entries.len() > MAX_KPM_MODULES {
+    if kpm_entries.len() > MAX_KPM_MODULES {
         warn!(
             "[kpm_autoload] too many entries ({}), truncating to {}",
-            config.kpm_entries.len(),
+            kpm_entries.len(),
             MAX_KPM_MODULES
         );
     }
 
+    let mut matched = 0u32;
     let mut success = 0u32;
     let mut fail = 0u32;
-    for entry in config.kpm_entries.iter().take(MAX_KPM_MODULES) {
+    for entry in kpm_entries.iter().take(MAX_KPM_MODULES) {
         if entry.event != event_filter {
-            info!("[kpm_autoload] skipping '{}' (event='{}', expected='{}')", entry.path, entry.event, event_filter);
+            info!(
+                "[kpm_autoload] skipping '{}' (event='{}', expected='{}')",
+                entry.path, entry.event, event_filter
+            );
             continue;
         }
+
+        matched += 1;
 
         let path_str = &entry.path;
 
@@ -479,14 +552,22 @@ pub fn autoload_kpm_modules(superkey: &Option<String>, event_filter: &str) {
         };
 
         let allowed_dir = std::path::Path::new(crate::defs::FP_KPMS_AUTOLOAD_DIR);
-        if !canonical.starts_with(allowed_dir) {
+        let canonical_allowed =
+            std::fs::canonicalize(allowed_dir).unwrap_or_else(|_| allowed_dir.to_path_buf());
+        if !canonical.starts_with(&canonical_allowed) && !canonical.starts_with(allowed_dir) {
+            if !std::path::Path::new(path_str).is_absolute() {
+                warn!(
+                    "[kpm_autoload] relative path '{}' outside allowed directory '{}', skipping",
+                    path_str,
+                    crate::defs::FP_KPMS_AUTOLOAD_DIR
+                );
+                fail += 1;
+                continue;
+            }
             warn!(
-                "[kpm_autoload] path '{}' outside allowed directory '{}', skipping",
-                path_str,
-                crate::defs::FP_KPMS_AUTOLOAD_DIR
+                "[kpm_autoload] compatibility mode: allowing legacy external path '{}'",
+                path_str
             );
-            fail += 1;
-            continue;
         }
 
         let path_cstr = match CString::new(canonical.to_string_lossy().into_owned()) {
@@ -505,58 +586,89 @@ pub fn autoload_kpm_modules(superkey: &Option<String>, event_filter: &str) {
                 continue;
             }
         };
-        info!("[kpm_autoload] loading '{}' with event='{}' args='{}'", path_str, entry.event, entry.args);
+        info!(
+            "[kpm_autoload] loading '{}' with event='{}' args='{}'",
+            path_str, entry.event, entry.args
+        );
         let rc = sc_kpm_load(&key, &path_cstr, &args_cstr);
         if rc == 0 {
             success += 1;
             info!("[kpm_autoload] loaded: {}", path_str);
+        } else if rc == -(EEXIST as c_long) {
+            success += 1;
+            info!(
+                "[kpm_autoload] already loaded, treating as success: {}",
+                path_str
+            );
         } else {
             fail += 1;
             warn!("[kpm_autoload] failed to load '{}', rc={}", path_str, rc);
         }
     }
-    info!("[kpm_autoload] done: success={}, fail={}", success, fail);
+
+    if matched == 0 {
+        info!("[kpm_autoload] no entries matched event '{}'", event_filter);
+        return;
+    }
+
+    set_retry_flag(
+        crate::defs::KPM_AUTOLOAD_RETRY_FILE,
+        fail > 0,
+        "kpm_autoload",
+    );
+    info!(
+        "[kpm_autoload] done: event='{}', matched={}, success={}, fail={}",
+        event_filter, matched, success, fail
+    );
 }
 
 fn sc_pathhide_enable(key: &CStr, enable: bool) -> c_long {
     if key.to_bytes().is_empty() {
         return (-EINVAL).into();
     }
-    unsafe {
+    let rc = unsafe {
         syscall(
             __NR_SUPERCALL,
             key.as_ptr(),
             ver_and_cmd(SUPERCALL_PATHHIDE_ENABLE),
             if enable { 1i64 } else { 0i64 },
         ) as c_long
-    }
+    };
+    info!("[diag:sc_pathhide_enable] key_len={} enable={} rc={}", key.to_bytes().len(), enable, rc);
+    rc
 }
 
 fn sc_pathhide_add(key: &CStr, path: &CStr) -> c_long {
     if key.to_bytes().is_empty() || path.to_bytes().is_empty() {
         return (-EINVAL).into();
     }
-    unsafe {
+    let rc = unsafe {
         syscall(
             __NR_SUPERCALL,
             key.as_ptr(),
             ver_and_cmd(SUPERCALL_PATHHIDE_ADD),
             path.as_ptr(),
         ) as c_long
+    };
+    if rc < 0 {
+        warn!("[diag:sc_pathhide_add] path='{}' rc={}", path.to_string_lossy(), rc);
     }
+    rc
 }
 
 fn sc_pathhide_clear(key: &CStr) -> c_long {
     if key.to_bytes().is_empty() {
         return (-EINVAL).into();
     }
-    unsafe {
+    let rc = unsafe {
         syscall(
             __NR_SUPERCALL,
             key.as_ptr(),
             ver_and_cmd(SUPERCALL_PATHHIDE_CLEAR),
         ) as c_long
-    }
+    };
+    info!("[diag:sc_pathhide_clear] key_len={} rc={}", key.to_bytes().len(), rc);
+    rc
 }
 
 fn sc_pathhide_uid_mode(key: &CStr, enable: bool) -> c_long {
@@ -618,14 +730,16 @@ fn sc_netisolate_enable(key: &CStr, enable: bool) -> c_long {
     if key.to_bytes().is_empty() {
         return (-EINVAL).into();
     }
-    unsafe {
+    let rc = unsafe {
         syscall(
             __NR_SUPERCALL,
             key.as_ptr(),
             ver_and_cmd(SUPERCALL_NETISOLATE_ENABLE),
             if enable { 1i64 } else { 0i64 },
         ) as c_long
-    }
+    };
+    info!("[diag:sc_netisolate_enable] key_len={} enable={} rc={}", key.to_bytes().len(), enable, rc);
+    rc
 }
 
 fn sc_netisolate_uid_add(key: &CStr, uid: i32) -> c_long {
@@ -712,19 +826,28 @@ pub fn apply_netisolate(superkey: &Option<String>) {
 }
 
 pub fn apply_pathhide(superkey: &Option<String>) {
+    info!("[diag:pathhide] superkey_present={}", superkey.is_some());
+
     if !std::path::Path::new(crate::defs::PATHHIDE_ENABLE_FILE).exists() {
+        set_retry_flag(crate::defs::PATHHIDE_RETRY_FILE, false, "pathhide");
         info!("[pathhide] disabled, skipping");
         return;
     }
 
     let key = convert_superkey(superkey);
     let key = match key {
-        Some(k) => k,
+        Some(k) => {
+            info!("[diag:pathhide] key_len={}", k.to_bytes().len());
+            k
+        }
         None => {
+            set_retry_flag(crate::defs::PATHHIDE_RETRY_FILE, true, "pathhide");
             warn!("[pathhide] no superkey available");
             return;
         }
     };
+
+    let mut had_error = false;
 
     // Step 1: Clear and populate blocklist (pathhide not yet enabled, hooks are no-ops)
     match std::fs::read_to_string(crate::defs::PATHHIDE_PATHS_FILE) {
@@ -732,14 +855,14 @@ pub fn apply_pathhide(superkey: &Option<String>) {
             sc_pathhide_clear(&key);
             let mut count = 0u32;
             for path in paths.lines() {
-                let path = path.trim();
-                if path.is_empty() {
+                let Some(path) = normalize_pathhide_path(path) else {
                     continue;
-                }
-                match CString::new(path) {
+                };
+                match CString::new(path.as_str()) {
                     Ok(path_cstr) => {
                         let rc = sc_pathhide_add(&key, &path_cstr);
                         if rc < 0 {
+                            had_error = true;
                             warn!("[pathhide] add path '{}' failed: {}", path, rc);
                         } else {
                             count += 1;
@@ -773,6 +896,7 @@ pub fn apply_pathhide(superkey: &Option<String>) {
                         Ok(uid) => {
                             let rc = sc_pathhide_uid_add(&key, uid);
                             if rc < 0 {
+                                had_error = true;
                                 warn!("[pathhide] add uid {} failed: {}", uid, rc);
                             } else {
                                 count += 1;
@@ -792,6 +916,7 @@ pub fn apply_pathhide(superkey: &Option<String>) {
 
         let rc = sc_pathhide_uid_mode(&key, true);
         if rc < 0 {
+            had_error = true;
             warn!("[pathhide] uid mode enable failed: {}", rc);
         }
     }
@@ -800,6 +925,7 @@ pub fn apply_pathhide(superkey: &Option<String>) {
     if std::path::Path::new(crate::defs::PATHHIDE_FILTER_SYSTEM_FILE).exists() {
         let rc = sc_pathhide_filter_system(&key, true);
         if rc < 0 {
+            had_error = true;
             warn!("[pathhide] filter_system enable failed: {}", rc);
         }
     }
@@ -807,11 +933,17 @@ pub fn apply_pathhide(superkey: &Option<String>) {
     // Step 3: Enable pathhide LAST (all config is now in place)
     let rc = sc_pathhide_enable(&key, true);
     if rc < 0 {
+        set_retry_flag(crate::defs::PATHHIDE_RETRY_FILE, true, "pathhide");
         warn!("[pathhide] enable failed: {}", rc);
         return;
     }
 
-    info!("[pathhide] auto-apply completed");
+    set_retry_flag(crate::defs::PATHHIDE_RETRY_FILE, had_error, "pathhide");
+    if had_error {
+        warn!("[pathhide] auto-apply completed with recoverable errors, retry requested");
+    } else {
+        info!("[pathhide] auto-apply completed");
+    }
 }
 
 fn sc_uts_set(key: &CStr, release: Option<&CStr>, version: Option<&CStr>) -> c_long {
@@ -826,7 +958,7 @@ fn sc_uts_set(key: &CStr, release: Option<&CStr>, version: Option<&CStr>) -> c_l
         Some(v) => v.as_ptr(),
         None => std::ptr::null(),
     };
-    unsafe {
+    let rc = unsafe {
         syscall(
             __NR_SUPERCALL,
             key.as_ptr(),
@@ -834,19 +966,56 @@ fn sc_uts_set(key: &CStr, release: Option<&CStr>, version: Option<&CStr>) -> c_l
             release_ptr,
             version_ptr,
         ) as c_long
-    }
+    };
+    let rel_str = release.map(|r| r.to_string_lossy().into_owned()).unwrap_or_default();
+    let ver_str = version.map(|v| v.to_string_lossy().into_owned()).unwrap_or_default();
+    info!("[diag:sc_uts_set] key_len={} release='{}' version='{}' rc={}", key.to_bytes().len(), rel_str, ver_str, rc);
+    rc
 }
 
 fn sc_uts_reset(key: &CStr) -> c_long {
     if key.to_bytes().is_empty() {
         return (-EINVAL).into();
     }
-    unsafe {
+    let rc = unsafe {
         syscall(
             __NR_SUPERCALL,
             key.as_ptr(),
             ver_and_cmd(SUPERCALL_UTS_RESET),
         ) as c_long
+    };
+    info!("[diag:sc_uts_reset] key_len={} rc={}", key.to_bytes().len(), rc);
+    rc
+}
+
+fn normalize_pathhide_path(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || !trimmed.starts_with('/') {
+        return None;
+    }
+
+    let mut normalized = String::with_capacity(trimmed.len());
+    let mut prev_was_slash = false;
+    for ch in trimmed.chars() {
+        if ch == '/' {
+            if !prev_was_slash {
+                normalized.push(ch);
+            }
+            prev_was_slash = true;
+        } else {
+            normalized.push(ch);
+            prev_was_slash = false;
+        }
+    }
+
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
     }
 }
 
@@ -855,7 +1024,10 @@ pub fn apply_uts_spoof(superkey: &Option<String>) {
 
     const MAX_BOOT_RETRIES: u32 = 3;
 
+    info!("[diag:uts_spoof] superkey_present={}", superkey.is_some());
+
     if !Path::new(crate::defs::UTS_SPOOF_ENABLE_FILE).exists() {
+        set_retry_flag(crate::defs::UTS_SPOOF_RETRY_FILE, false, "uts_spoof");
         info!("[uts_spoof] disabled, skipping");
         return;
     }
@@ -881,14 +1053,22 @@ pub fn apply_uts_spoof(superkey: &Option<String>) {
 
     let key = convert_superkey(superkey);
     let key = match key {
-        Some(k) => k,
+        Some(k) => {
+            info!("[diag:uts_spoof] key_len={}", k.to_bytes().len());
+            k
+        }
         None => {
+            set_retry_flag(crate::defs::UTS_SPOOF_RETRY_FILE, true, "uts_spoof");
             warn!("[uts_spoof] no superkey available");
             return;
         }
     };
 
-    let _ = sc_uts_reset(&key);
+    let reset_rc = sc_uts_reset(&key);
+    if reset_rc < 0 {
+        set_retry_flag(crate::defs::UTS_SPOOF_RETRY_FILE, true, "uts_spoof");
+        warn!("[uts_spoof] reset failed: {}", reset_rc);
+    }
 
     let retries = match std::fs::read_to_string(crate::defs::UTS_SPOOF_BOOT_PENDING) {
         Ok(s) => s.trim().parse::<u32>().unwrap_or(0),
@@ -901,10 +1081,14 @@ pub fn apply_uts_spoof(superkey: &Option<String>) {
             retries, MAX_BOOT_RETRIES
         );
         let _ = std::fs::remove_file(crate::defs::UTS_SPOOF_BOOT_PENDING);
+        set_retry_flag(crate::defs::UTS_SPOOF_RETRY_FILE, false, "uts_spoof");
         return;
     }
 
-    if let Err(e) = std::fs::write(crate::defs::UTS_SPOOF_BOOT_PENDING, (retries + 1).to_string()) {
+    if let Err(e) = std::fs::write(
+        crate::defs::UTS_SPOOF_BOOT_PENDING,
+        (retries + 1).to_string(),
+    ) {
         warn!("[uts_spoof] failed to write boot pending flag: {}", e);
     }
 
@@ -933,17 +1117,19 @@ pub fn apply_uts_spoof(superkey: &Option<String>) {
     };
 
     if release_cstr.is_some() || version_cstr.is_some() {
-        let rc = sc_uts_set(
-            &key,
-            release_cstr.as_deref(),
-            version_cstr.as_deref(),
-        );
+        let rc = sc_uts_set(&key, release_cstr.as_deref(), version_cstr.as_deref());
         if rc == 0 {
-            info!("[uts_spoof] applied: release='{}' version='{}'", release, version);
+            set_retry_flag(crate::defs::UTS_SPOOF_RETRY_FILE, false, "uts_spoof");
+            info!(
+                "[uts_spoof] applied: release='{}' version='{}'",
+                release, version
+            );
         } else {
+            set_retry_flag(crate::defs::UTS_SPOOF_RETRY_FILE, true, "uts_spoof");
             warn!("[uts_spoof] set failed: {}", rc);
         }
     } else {
+        set_retry_flag(crate::defs::UTS_SPOOF_RETRY_FILE, false, "uts_spoof");
         info!("[uts_spoof] config has empty values, skipping set");
     }
 }
