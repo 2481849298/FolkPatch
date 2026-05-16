@@ -311,10 +311,13 @@ registerDownloadTask(
     project = project
 )
 
-// Compat shim shipped alongside KernelPatch latest release as kpatch-android.
+// Compat shim: pre-0.10.7 KernelPatch still ships a standalone "kpatch"
+// ELF that the manager uses as a root-shell fallback when SUPERCMD fails.
+// The 0.13.x line dropped the kpatch binary, so pin to bmax121's 0.10.7
+// release where this asset is still present and immutable.
 registerDownloadTask(
     taskName = "downloadCompatKpatch",
-    srcUrl = "https://github.com/2481849298/KernelPatch/releases/latest/download/kpatch-android",
+    srcUrl = "https://github.com/bmax121/KernelPatch/releases/download/0.10.7/kpatch-android",
     destPath = "${project.projectDir}/libs/arm64-v8a/libkpatch.so",
     project = project
 )
