@@ -131,6 +131,7 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler, ImageLoade
         private const val LEGACY_SU_PATH = "/system/bin/su"
 
         const val SP_NAME = "config"
+        const val KEY_SUPER_KEY = "super_key"
         const val PREF_BLOCK_KERNELPATCH_UPDATE = "block_kernelpatch_update"
         const val PREF_BLOCK_ANDROIDPATCH_UPDATE = "block_androidpatch_update"
         const val PREF_AUTO_EXCLUDE_NEW_APPS = "auto_exclude_new_apps"
@@ -247,6 +248,9 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler, ImageLoade
         var superKey: String = ""
             set(value) {
                 field = value
+                if (::sharedPreferences.isInitialized) {
+                    sharedPreferences.edit().putString(KEY_SUPER_KEY, value).apply()
+                }
                 _kpStateInitializedLiveData.postValue(false)
                 val ready = Natives.nativeReady(value)
                 _kpStateLiveData.value =
@@ -343,7 +347,8 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler, ImageLoade
         super.onCreate()
         apApp = this
         sharedPreferences = getSharedPreferences(SP_NAME, Context.MODE_PRIVATE)
-        superKey = "su"
+        superKey = sharedPreferences.getString(KEY_SUPER_KEY, null)
+            ?.takeIf { it.isNotBlank() } ?: "su"
         if (Application.getProcessName().endsWith(":root") || Application.getProcessName().endsWith(":webui")) {
             return
         }

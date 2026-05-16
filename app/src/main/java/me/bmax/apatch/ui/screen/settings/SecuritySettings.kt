@@ -1,11 +1,23 @@
 package me.bmax.apatch.ui.screen.settings
 
 import androidx.biometric.BiometricPrompt
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
@@ -33,7 +45,37 @@ fun SecuritySettingsContent(
                 androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
     ) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
 
+    var currentSuperKey by remember { mutableStateOf(APApplication.superKey) }
+    var showSuperKeyDialog by remember { mutableStateOf(false) }
+    var superKeyDraft by remember { mutableStateOf(APApplication.superKey) }
+
     SplicedColumnGroup(flat = flat) {
+        item {
+            ListItem(
+                headlineContent = {
+                    Text(stringResource(id = R.string.settings_super_key_title))
+                },
+                supportingContent = {
+                    Text(
+                        text = if (currentSuperKey.isBlank()) {
+                            stringResource(id = R.string.settings_super_key_unset)
+                        } else {
+                            stringResource(id = R.string.settings_super_key_current, currentSuperKey)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                },
+                leadingContent = {
+                    Icon(imageVector = Icons.Filled.Key, contentDescription = null)
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                modifier = androidx.compose.ui.Modifier.clickable {
+                    superKeyDraft = currentSuperKey
+                    showSuperKeyDialog = true
+                },
+            )
+        }
         item(visible = canAuthenticate) {
             ToggleSettingCard(
                 flat = flat,
@@ -91,5 +133,42 @@ fun SecuritySettingsContent(
                 }
             )
         }
+    }
+
+    if (showSuperKeyDialog) {
+        AlertDialog(
+            onDismissRequest = { showSuperKeyDialog = false },
+            title = { Text(stringResource(id = R.string.settings_super_key_title)) },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(id = R.string.settings_super_key_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                    OutlinedTextField(
+                        value = superKeyDraft,
+                        onValueChange = { superKeyDraft = it },
+                        singleLine = true,
+                        label = { Text(stringResource(id = R.string.settings_super_key_label)) },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val newKey = superKeyDraft.trim().ifBlank { "su" }
+                    APApplication.superKey = newKey
+                    currentSuperKey = newKey
+                    showSuperKeyDialog = false
+                }) {
+                    Text(stringResource(id = android.R.string.ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSuperKeyDialog = false }) {
+                    Text(stringResource(id = android.R.string.cancel))
+                }
+            },
+        )
     }
 }

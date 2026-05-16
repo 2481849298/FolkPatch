@@ -702,6 +702,11 @@
     <string name="settings_biometric_login_summary">打开应用时要求生物识别认证</string>
     <string name="settings_strong_biometric">强力生物识别</string>
     <string name="settings_strong_biometric_summary">安装、卸载或禁用模块时需要验证</string>
+    <string name="settings_super_key_title">SuperKey</string>
+    <string name="settings_super_key_unset">未设置 (默认: su)</string>
+    <string name="settings_super_key_current">当前: %1$s</string>
+    <string name="settings_super_key_label">SuperKey</string>
+    <string name="settings_super_key_hint">必须与 boot.img 注入时使用的 SuperKey 一致。</string>
 
     <!-- Theme Store Strings -->
     <string name="theme_store_title">主题商店</string>
