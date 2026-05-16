@@ -26,7 +26,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
@@ -37,13 +36,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -62,7 +59,6 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.PatchesDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
-import me.bmax.apatch.APApplication
 import me.bmax.apatch.R
 import me.bmax.apatch.ui.component.rememberConfirmDialog
 import me.bmax.apatch.ui.theme.BackgroundConfig
@@ -80,21 +76,6 @@ fun InstallModeSelectScreen(navigator: DestinationsNavigator) {
         mutableStateOf<InstallMethod?>(null)
     }
 
-    var superKeyVersion by remember { mutableStateOf(0) }
-    val currentSuperKey by remember(superKeyVersion) { mutableStateOf(APApplication.superKey) }
-
-    if (currentSuperKey.isBlank()) {
-        SuperKeyPromptDialog(
-            initial = "",
-            onCancel = { navigator.popBackStack() },
-            onConfirm = { newKey ->
-                APApplication.superKey = newKey
-                superKeyVersion++
-            },
-        )
-        return
-    }
-
     Scaffold(topBar = {
         TopBar(
             onBack = dropUnlessResumed { navigator.popBackStack() },
@@ -110,48 +91,6 @@ fun InstallModeSelectScreen(navigator: DestinationsNavigator) {
 
         }
     }
-}
-
-@Composable
-internal fun SuperKeyPromptDialog(
-    initial: String,
-    onCancel: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
-    var draft by remember { mutableStateOf(initial) }
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text(stringResource(id = R.string.home_super_key_required_title)) },
-        text = {
-            Column {
-                Text(
-                    text = stringResource(id = R.string.home_super_key_dialog_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
-                )
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    singleLine = true,
-                    label = { Text(stringResource(id = R.string.home_super_key_dialog_label)) },
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = draft.trim().isNotEmpty(),
-                onClick = { onConfirm(draft.trim()) },
-            ) {
-                Text(stringResource(id = android.R.string.ok))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onCancel) {
-                Text(stringResource(id = android.R.string.cancel))
-            }
-        },
-    )
 }
 
 sealed class InstallMethod {

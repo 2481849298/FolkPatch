@@ -21,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.filled.CheckCircle
@@ -30,6 +31,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Fingerprint
@@ -100,6 +103,9 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -885,6 +891,7 @@ private fun KStatusCard(
     }
 
     if (showSuperKeyDialog) {
+        var keyVisible by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { showSuperKeyDialog = false },
             title = { Text(stringResource(id = R.string.home_super_key_required_title)) },
@@ -895,13 +902,31 @@ private fun KStatusCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline,
                     )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = superKeyDraft,
-                        onValueChange = { superKeyDraft = it },
-                        singleLine = true,
-                        label = { Text(stringResource(id = R.string.home_super_key_dialog_label)) },
-                    )
+                    Spacer(Modifier.height(12.dp))
+                    Box(contentAlignment = Alignment.CenterEnd) {
+                        OutlinedTextField(
+                            modifier = Modifier.fillMaxWidth(),
+                            value = superKeyDraft,
+                            onValueChange = { superKeyDraft = it },
+                            singleLine = true,
+                            label = { Text(stringResource(id = R.string.home_super_key_dialog_label)) },
+                            visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            shape = RoundedCornerShape(50.0f),
+                        )
+                        IconButton(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .padding(top = 6.dp, end = 5.dp),
+                            onClick = { keyVisible = !keyVisible },
+                        ) {
+                            Icon(
+                                imageVector = if (keyVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                contentDescription = null,
+                                tint = androidx.compose.ui.graphics.Color.Gray,
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {

@@ -30,14 +30,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -45,6 +50,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -54,9 +60,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
@@ -159,6 +169,13 @@ fun Patches(mode: PatchesViewModel.PatchMode) {
                 KernelImageView(viewModel.kimgInfo)
             }
 
+            if (mode != PatchesViewModel.PatchMode.UNPATCH &&
+                mode != PatchesViewModel.PatchMode.RESTORE &&
+                viewModel.kimgInfo.banner.isNotEmpty()
+            ) {
+                SetSuperKeyView(viewModel)
+            }
+
             if (viewModel.useCustomKPImg && !viewModel.patching && !viewModel.patchdone) {
                 SelectFileButton(
                     text = stringResource(id = R.string.patch_select_kpimg_btn),
@@ -204,7 +221,8 @@ fun Patches(mode: PatchesViewModel.PatchMode) {
             if (!viewModel.patching && !viewModel.patchdone) {
                 // patch start
                 if (mode != PatchesViewModel.PatchMode.UNPATCH && mode != PatchesViewModel.PatchMode.RESTORE) {
-                    if (viewModel.kimgInfo.banner.isNotEmpty()) {
+                    val keyValid = viewModel.checkSuperKeyValidation(viewModel.superkey)
+                    if (viewModel.kimgInfo.banner.isNotEmpty() && keyValid) {
                         StartButton(stringResource(id = R.string.patch_start_patch_btn)) {
                             viewModel.doPatch(mode, false)
                         }
@@ -605,4 +623,74 @@ private fun PatchMode(mode: PatchesViewModel.PatchMode) {
 @Composable
 private fun TopBar() {
     TopAppBar(title = { Text(stringResource(R.string.patch_config_title)) })
+}
+
+@Composable
+private fun SetSuperKeyView(viewModel: PatchesViewModel) {
+    var skey by remember { mutableStateOf(viewModel.superkey) }
+    var showWarn by remember { mutableStateOf(!viewModel.checkSuperKeyValidation(skey)) }
+    var keyVisible by remember { mutableStateOf(false) }
+    ElevatedCard(
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = stringResource(id = R.string.patch_item_skey),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+            if (showWarn) {
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    color = Color.Red,
+                    text = stringResource(id = R.string.patch_item_set_skey_label),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            Box(contentAlignment = Alignment.CenterEnd) {
+                OutlinedTextField(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp),
+                    value = skey,
+                    label = { Text(stringResource(id = R.string.patch_set_superkey)) },
+                    visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    shape = RoundedCornerShape(50.0f),
+                    onValueChange = {
+                        skey = it
+                        if (viewModel.checkSuperKeyValidation(it)) {
+                            viewModel.superkey = it
+                            showWarn = false
+                        } else {
+                            viewModel.superkey = ""
+                            showWarn = true
+                        }
+                    },
+                )
+                IconButton(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .padding(top = 15.dp, end = 5.dp),
+                    onClick = { keyVisible = !keyVisible }
+                ) {
+                    Icon(
+                        imageVector = if (keyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                        contentDescription = null,
+                        tint = Color.Gray,
+                    )
+                }
+            }
+        }
+    }
 }

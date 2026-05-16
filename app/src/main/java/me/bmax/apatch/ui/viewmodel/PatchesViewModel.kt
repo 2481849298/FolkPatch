@@ -66,10 +66,16 @@ class PatchesViewModel : ViewModel() {
     var bootDev by mutableStateOf("")
     var kimgInfo by mutableStateOf(KPModel.KImgInfo("", false))
     var kpimgInfo by mutableStateOf(KPModel.KPImgInfo("", "", "", "", ""))
-    var superkey by mutableStateOf(APApplication.superKey)
+    var superkey by mutableStateOf("")
     var existedExtras = mutableStateListOf<KPModel.IExtraInfo>()
     var newExtras = mutableStateListOf<KPModel.IExtraInfo>()
     var newExtrasFileName = mutableListOf<String>()
+
+    fun checkSuperKeyValidation(superKey: String): Boolean {
+        val length = superKey.length
+        val regex = Regex("^(?=.*[A-Za-z])(?=.*\\d)[A-Za-z\\d]{8,63}$")
+        return length in 8..63 && regex.matches(superKey)
+    }
 
     var running by mutableStateOf(false)
     var patching by mutableStateOf(false)
@@ -533,11 +539,9 @@ class PatchesViewModel : ViewModel() {
             // adapt for 0.10.7 and lower KP
             var isKpOld = false
 
-            val superkey = APApplication.superKey.trim().ifEmpty {
-                this@PatchesViewModel.superkey.trim()
-            }
+            val superkey = this@PatchesViewModel.superkey.trim()
             if (superkey.isEmpty()) {
-                logs.add(" SuperKey is empty. Please set it from the home screen first.")
+                logs.add(" SuperKey is empty. Toggle 'Custom SuperKey' on the patch page and enter a valid key.")
                 error = "SuperKey is empty"
                 patchdone = true
                 patching = false
