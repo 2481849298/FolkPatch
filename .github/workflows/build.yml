@@ -144,8 +144,8 @@ jobs:
       - name: Get version
         id: version
         run: |
-          VERSION=$(grep 'fun getVersionName' build.gradle.kts | sed -E 's/.*"(.*)".*/\1/')
-          CODE=$(grep 'fun getVersionCode' build.gradle.kts | sed -E 's/.*return ([0-9]+).*/\1/')
+          VERSION=$(grep -A 1 'fun getVersionName' build.gradle.kts | grep -m1 'return ' | sed -E 's/.*"(.*)".*/\1/')
+          CODE=$(grep -A 1 'fun getVersionCode' build.gradle.kts | grep -m1 'return ' | sed -E 's/.*return ([0-9]+).*/\1/')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION-$CODE" >> "$GITHUB_OUTPUT"
